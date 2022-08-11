@@ -39,7 +39,7 @@ namespace HttpClientTestAPI.Controllers
 
             return new SamplePayload
             {
-                Id = 0,
+                Id = id,
                 Name = "Fast Sample Payload",
                 Data = "Some data lives here"
             };
@@ -57,20 +57,43 @@ namespace HttpClientTestAPI.Controllers
             await Task.Delay(1000 + delayMs);
             return new SamplePayload
             {
-               Id = 0,
+               Id = id,
                Name = "Slow Sample Payload",
                Data = "Some data lives here"
             };
         }
-        
+
+
         // TODO: build out the _unreliable_ endpoints to test the retry policies
         [HttpGet]
         [Route("unreliable")]
         public async Task<string> GetUnreliable()
         {
+            _logger.LogInformation($"Unreliable");
             //TODO: psuedo-randonly throw exception to trigger a failed response
             await Task.Delay(TimeSpan.FromSeconds(121));
             return "slow";
+        }
+
+
+        [HttpPost]
+        [Route("post")]
+        public async Task<SamplePayload> Post(SamplePayload payload)
+        {
+            _logger.LogInformation($"Post (Id: {payload.Id})");
+            payload.Id++;
+            await Task.Delay(1000); // simulate a slow datalayer operation
+            return payload;
+        }
+
+        [HttpPut]
+        [Route("put")]
+        public async Task<SamplePayload> Put(SamplePayload payload)
+        {
+            _logger.LogInformation($"Put (Id: {payload.Id})");
+            payload.Id++;
+            await Task.Delay(1000); // simulate a slow datalayer operation
+            return payload;
         }
     }
 }
