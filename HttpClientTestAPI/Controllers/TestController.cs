@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using HttpClientTestAPI.Models;
@@ -46,33 +48,95 @@ namespace HttpClientTestAPI.Controllers
         }
 
         [HttpGet]
-        [Route("slow/{id}/{delay}")]
-        //public async Task<IEnumerable<SamplePayload>> GetSlow(int delayMs)
-        public async Task<SamplePayload> GetSlow(int id, int delayMs)
+        [Route("delayed/{id}/{delay}")]
+        public async Task<SamplePayload> GetDelayed(int id, int delayMs)
         {
-            //TODO: refactor this so it's a stream instead of a delayed response - doesn't really mimic a slow connection in this form.
-            _logger.LogInformation($"Get Slow {id}");
+            _logger.LogInformation($"Get Delayed {id}");
 
             // delay between delayMs and 2 + delayMs
             await Task.Delay(1000 + delayMs);
             return new SamplePayload
             {
                Id = id,
-               Name = "Slow Sample Payload",
+               Name = "Delayed Sample Payload",
                Data = "Some data lives here"
             };
         }
 
-
-        // TODO: build out the _unreliable_ endpoints to test the retry policies
         [HttpGet]
-        [Route("unreliable")]
-        public async Task<string> GetUnreliable()
+        [Route("slow/{id}")]
+        public async Task GetSlow(int id)
         {
-            _logger.LogInformation($"Unreliable");
-            //TODO: psuedo-randonly throw exception to trigger a failed response
-            await Task.Delay(TimeSpan.FromSeconds(121));
-            return "slow";
+            _logger.LogInformation($"Get Slow {id}");
+            
+            Stopwatch chunkTimer = Stopwatch.StartNew();
+            const int contentLength = 1024 * 1024 * 1;  // 1 MB
+            const int chunkSize = 1024 * 16;            // in 16kb chunks
+            const int responseTimeMs = 10000;           // Response to take 10 sec
+
+            Debug.Assert(chunkSize % 128 == 0 && contentLength % chunkSize == 0, "chunkSize must be multiple of 128 and divide into contentLength");
+            
+            HttpContext.Response.StatusCode = (int)HttpStatusCode.OK;
+            HttpContext.Response.ContentLength = contentLength;
+            HttpContext.Response.ContentType = "application/octet-stream";
+
+            int bytesWritten = 0;
+            while (bytesWritten < contentLength)
+            {
+                StringBuilder content = new StringBuilder(chunkSize);
+                while (content.Length < chunkSize)
+                {
+                    string txt = $"{bytesWritten + 128} bytes".PadRight(127, '-') + "\n";
+                    content.Append(txt);
+                    bytesWritten += 128;
+                }
+                byte[] chunk = Encoding.UTF8.GetBytes(content.ToString());
+                Debug.Assert(chunk.Length == chunkSize);
+
+                await HttpContext.Response.BodyWriter.WriteAsync(chunk.AsMemory());
+                
+                double percentComplete = (double)bytesWritten / contentLength;
+                long durationSoFarMs = chunkTimer.ElapsedMilliseconds;
+                int delayMs = (int)(percentComplete * responseTimeMs - durationSoFarMs);
+                if (delayMs > 0) 
+                    await Task.Delay(delayMs);
+            }
+
+            await HttpContext.Response.CompleteAsync();
+
+            _logger.LogInformation($"Get Slow {id} - Complete");
+        }
+        
+        [HttpGet]
+        [Route("unreliable/{id}")]
+        public async Task<SamplePayload> GetUnreliable(int id)
+        {
+            _logger.LogInformation($"Unreliable {id}");
+
+            if (_random.Next(1, 3) == 1)
+            {
+                _logger.LogInformation($"--- Delaying Request!");
+                await Task.Delay(TimeSpan.FromSeconds(4));
+            }
+
+            return new SamplePayload
+            {
+                Id = id,
+                Name = "Unreliable Sample Payload",
+                Data = "Some data lives here"
+            };
+        }
+
+        [HttpGet]
+        [Route("exception/{id}")]
+        public async Task<SamplePayload> GetException(int id)
+        {
+            _logger.LogInformation($"Exception {id}");
+            
+            await Task.Delay(1000);
+            
+            _logger.LogInformation($"Throwing Exception!");
+            throw new HttpRequestException("This endpoint must be unreliable!");
         }
 
 
